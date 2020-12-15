@@ -10,4 +10,4 @@ RUN go build -o goas ./cmd/goas/main.go
 
 FROM alpine:3.10
 COPY --from=build /app/goas /goas
-CMD ["/goas", "-d", "/data"]
+CMD ["/goas", "-d", "/data", "-s", "/resources"]

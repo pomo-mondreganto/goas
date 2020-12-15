@@ -9,3 +9,4 @@ services:
       - environment.env
     volumes:
       - ./data:/data
+      - ./resources:/resources
