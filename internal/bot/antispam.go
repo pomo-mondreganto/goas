@@ -7,7 +7,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.uber.org/atomic"
 	"image/jpeg"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -33,16 +36,6 @@ const (
 
 var bannedStrings = []string{
 	"/joinchat/",
-}
-
-var imageHashes = []uint64{
-	10332248237452678527,
-	13577964751561916522,
-	13879425976505494127,
-	13794120005494080568,
-	10044012355472643967,
-	13781154564668688256,
-	12637545215187122845,
 }
 
 func (b *Bot) isChatMessageSuspicious(upd tgbotapi.Update) (spamVerdict, error) {
@@ -181,18 +174,49 @@ func (b *Bot) checkPhotoHashMatches(fileID string, wg *sync.WaitGroup, logger *l
 		return false, fmt.Errorf("calculating hash: %w", err)
 	}
 
-	for i, other := range imageHashes {
+	for name, other := range b.spamSamples {
 		ih := goimagehash.NewImageHash(other, goimagehash.PHash)
 		dist, err := hash.Distance(ih)
 		if err != nil {
 			logger.Errorf("Error calculating distance: %v", err)
 			continue
 		}
-		logrus.Debugf("Distance to sample %d is %d", i, dist)
+		logrus.Debugf("Distance to sample %s is %d", name, dist)
 		if dist <= imageDistanceThreshold {
-			logger.Infof("Image matches with sample %d with distance %d", i, dist)
+			logger.Infof("Image matches with sample %s with distance %d", name, dist)
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func loadSamples(path string) (map[string]uint64, error) {
+	files, err := ioutil.ReadDir(path)
+	if err != nil {
+		return nil, fmt.Errorf("listing directory: %w", err)
+	}
+	result := make(map[string]uint64)
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), ".") || f.IsDir() {
+			continue
+		}
+		fname := filepath.Join(path, f.Name())
+		file, err := os.Open(fname)
+		if err != nil {
+			return nil, fmt.Errorf("opening file %s: %w", fname, err)
+		}
+
+		img, err := jpeg.Decode(file)
+		if err != nil {
+			return nil, fmt.Errorf("decoding jpeg: %w", err)
+		}
+
+		hash, err := goimagehash.PerceptionHash(img)
+		if err != nil {
+			return nil, fmt.Errorf("calculating hash: %w", err)
+		}
+
+		result[f.Name()] = hash.GetHash()
+	}
+	return result, nil
 }

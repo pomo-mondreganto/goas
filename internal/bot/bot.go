@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-func New(ctx context.Context, token string, debug bool, s *storage.Storage) (*Bot, error) {
+func New(ctx context.Context, token string, debug bool, samplesPath string, s *storage.Storage) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, fmt.Errorf("creating bot api: %w", err)
@@ -20,14 +20,22 @@ func New(ctx context.Context, token string, debug bool, s *storage.Storage) (*Bo
 	logger := logrus.WithField("account", api.Self.UserName)
 	logger.Infof("Authorized successfully")
 
+	samples, err := loadSamples(samplesPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading spam samples: %w", err)
+	}
+	logger.Infof("Loaded %d spam samples", len(samples))
+	logger.Debugf("Samples: %+v", samples)
+
 	b := Bot{
-		api:      api,
-		toSend:   make(chan tgbotapi.Chattable, 100),
-		toDelete: make(chan tgbotapi.DeleteMessageConfig, 100),
-		updates:  make(chan tgbotapi.Update, 100),
-		logger:   logger,
-		ctx:      ctx,
-		storage:  s,
+		api:         api,
+		toSend:      make(chan tgbotapi.Chattable, 100),
+		toDelete:    make(chan tgbotapi.DeleteMessageConfig, 100),
+		updates:     make(chan tgbotapi.Update, 100),
+		logger:      logger,
+		ctx:         ctx,
+		storage:     s,
+		spamSamples: samples,
 	}
 
 	b.setUpdatesPolling()
@@ -38,14 +46,15 @@ func New(ctx context.Context, token string, debug bool, s *storage.Storage) (*Bo
 }
 
 type Bot struct {
-	api      *tgbotapi.BotAPI
-	updates  chan tgbotapi.Update
-	toSend   chan tgbotapi.Chattable
-	toDelete chan tgbotapi.DeleteMessageConfig
-	logger   *logrus.Entry
-	ctx      context.Context
-	wg       sync.WaitGroup
-	storage  *storage.Storage
+	api         *tgbotapi.BotAPI
+	updates     chan tgbotapi.Update
+	toSend      chan tgbotapi.Chattable
+	toDelete    chan tgbotapi.DeleteMessageConfig
+	logger      *logrus.Entry
+	ctx         context.Context
+	wg          sync.WaitGroup
+	storage     *storage.Storage
+	spamSamples map[string]uint64
 }
 
 func (b *Bot) Wait() {
