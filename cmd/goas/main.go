@@ -15,6 +15,7 @@ import (
 
 func main() {
 	setupConfig()
+	initLogger()
 	setLogLevel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -46,6 +47,15 @@ func setupConfig() {
 
 	viper.SetEnvPrefix("GOAS")
 	viper.AutomaticEnv()
+}
+
+func initLogger() {
+	mainFormatter := &logrus.TextFormatter{}
+	mainFormatter.FullTimestamp = true
+	mainFormatter.ForceColors = true
+	mainFormatter.PadLevelText = true
+	mainFormatter.TimestampFormat = "2006-01-02 15:04:05"
+	logrus.SetFormatter(mainFormatter)
 }
 
 func setLogLevel() {
