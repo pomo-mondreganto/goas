@@ -93,7 +93,14 @@ loop:
 
 			if upd.Message.NewChatMembers != nil {
 				if err := b.processNewMembersUpdate(upd); err != nil {
-					b.logger.Error("Error deleting message: ", err)
+					b.logger.Error("Error processing new members: ", err)
+					break
+				}
+			}
+
+			if upd.Message.LeftChatMember != nil {
+				if err := b.processMemberLeftUpdate(upd); err != nil {
+					b.logger.Error("Error processing left member: ", err)
 					break
 				}
 			}

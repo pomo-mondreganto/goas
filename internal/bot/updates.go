@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"github.com/go-telegram-bot-api/telegram-bot-api"
+	"github.com/sirupsen/logrus"
 	"time"
 )
 
@@ -19,6 +20,34 @@ func (b *Bot) processTrustCommand(msg *tgbotapi.Message) error {
 	return nil
 }
 
+func (b *Bot) processBanCommand(msg *tgbotapi.Message) error {
+	if msg.ReplyToMessage == nil {
+		b.logger.Warning("Ban command called without reply")
+		return nil
+	}
+	userID := msg.ReplyToMessage.From.ID
+	if userID == b.api.Self.ID {
+		logrus.Warningf("Trying to ban me")
+		return nil
+	}
+
+	b.logger.Infof("Received command to ban %d", userID)
+	kickCfg := tgbotapi.KickChatMemberConfig{
+		ChatMemberConfig: tgbotapi.ChatMemberConfig{
+			ChatID: msg.Chat.ID,
+			UserID: userID,
+		},
+		UntilDate: 0,
+	}
+	b.logger.Infof("Kicking user %d", userID)
+	if _, err := b.api.KickChatMember(kickCfg); err != nil {
+		return fmt.Errorf("kicking user: %w", err)
+	}
+	b.logger.Infof("Deleting message %d from %d", msg.ReplyToMessage.MessageID, userID)
+	b.requestDelete(msg.Chat.ID, msg.ReplyToMessage.MessageID)
+	return nil
+}
+
 func (b *Bot) processNewMembersUpdate(upd tgbotapi.Update) error {
 	b.logger.Info("Processing new members message")
 	for _, member := range *upd.Message.NewChatMembers {
@@ -27,6 +56,12 @@ func (b *Bot) processNewMembersUpdate(upd tgbotapi.Update) error {
 		}
 	}
 	b.logger.Info("Deleting new members message")
+	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
+	return nil
+}
+
+func (b *Bot) processMemberLeftUpdate(upd tgbotapi.Update) error {
+	b.logger.Info("Deleting member left message")
 	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
 	return nil
 }
@@ -43,9 +78,14 @@ func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
 	}
 
 	if msg.IsCommand() {
-		if b.storage.IsUserAdmin(msg.From.ID) && msg.Command() == "trust" {
+		if msg.Command() == "trust" && b.storage.IsUserAdmin(msg.From.ID) {
 			if err := b.processTrustCommand(msg); err != nil {
 				return fmt.Errorf("processing trust command: %w", err)
+			}
+		}
+		if msg.Command() == "trust" && b.storage.IsUserAdmin(msg.From.ID) {
+			if err := b.processBanCommand(msg); err != nil {
+				return fmt.Errorf("processing ban command: %w", err)
 			}
 		}
 		b.logger.Info("Deleting command message in public chat")
@@ -55,16 +95,16 @@ func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
 
 	verdict, err := b.isChatMessageSuspicious(upd)
 	if err != nil {
-		return fmt.Errorf("checking suspicious message: %v", err)
+		return fmt.Errorf("checking suspicious message: %w", err)
 	}
 
 	if verdict == mightBeSpam {
 		if err := b.processSuspiciousMessage(upd); err != nil {
-			return fmt.Errorf("processing suspicious message: %v", err)
+			return fmt.Errorf("processing suspicious message: %w", err)
 		}
 	} else if verdict == definitelySpam {
 		if err := b.processSpamMessage(upd); err != nil {
-			return fmt.Errorf("processing spam message: %v", err)
+			return fmt.Errorf("processing spam message: %w", err)
 		}
 	}
 
