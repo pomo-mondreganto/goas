@@ -21,12 +21,13 @@ func New(ctx context.Context, token string, debug bool, s *storage.Storage) (*Bo
 	logger.Infof("Authorized successfully")
 
 	b := Bot{
-		api:     api,
-		toSend:  make(chan tgbotapi.Chattable, 100),
-		updates: make(chan tgbotapi.Update, 100),
-		logger:  logger,
-		ctx:     ctx,
-		storage: s,
+		api:      api,
+		toSend:   make(chan tgbotapi.Chattable, 100),
+		toDelete: make(chan tgbotapi.DeleteMessageConfig, 100),
+		updates:  make(chan tgbotapi.Update, 100),
+		logger:   logger,
+		ctx:      ctx,
+		storage:  s,
 	}
 
 	b.setUpdatesPolling()
