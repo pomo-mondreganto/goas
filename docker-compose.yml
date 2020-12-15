@@ -1,0 +1,11 @@
+version: '2.4'
+
+services:
+  goas:
+    build: .
+    tty: true
+    restart: on-failure
+    env_file:
+      - environment.env
+    volumes:
+      - ./data:/data
