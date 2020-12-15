@@ -53,14 +53,18 @@ func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
 		return nil
 	}
 
-	suspicious, err := b.IsChatMessageSuspicious(upd)
+	verdict, err := b.isChatMessageSuspicious(upd)
 	if err != nil {
 		return fmt.Errorf("checking suspicious message: %v", err)
 	}
 
-	if suspicious {
+	if verdict == mightBeSpam {
 		if err := b.processSuspiciousMessage(upd); err != nil {
 			return fmt.Errorf("processing suspicious message: %v", err)
+		}
+	} else if verdict == definitelySpam {
+		if err := b.processSpamMessage(upd); err != nil {
+			return fmt.Errorf("processing spam message: %v", err)
 		}
 	}
 
@@ -72,6 +76,15 @@ func (b *Bot) processSuspiciousMessage(upd tgbotapi.Update) error {
 	m.ParseMode = "markdown"
 	m.ReplyToMessageID = upd.Message.MessageID
 	b.logger.Info("Sending suspicious message notification")
+	b.requestSend(m)
+	return nil
+}
+
+func (b *Bot) processSpamMessage(upd tgbotapi.Update) error {
+	m := tgbotapi.NewMessage(upd.Message.Chat.ID, "This is definitely spam")
+	m.ParseMode = "markdown"
+	m.ReplyToMessageID = upd.Message.MessageID
+	b.logger.Info("Sending spam message notification")
 	b.requestSend(m)
 	return nil
 }
