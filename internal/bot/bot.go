@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"github.com/corona10/goimagehash"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/pomo-mondreganto/goas/internal/storage"
 	"github.com/sirupsen/logrus"
@@ -36,6 +37,7 @@ func New(ctx context.Context, token string, debug bool, samplesPath string, s *s
 		ctx:         ctx,
 		storage:     s,
 		spamSamples: samples,
+		samplesPath: samplesPath,
 	}
 
 	b.setUpdatesPolling()
@@ -54,7 +56,8 @@ type Bot struct {
 	ctx         context.Context
 	wg          sync.WaitGroup
 	storage     *storage.Storage
-	spamSamples map[string]uint64
+	spamSamples map[string]*goimagehash.ImageHash
+	samplesPath string
 }
 
 func (b *Bot) Wait() {

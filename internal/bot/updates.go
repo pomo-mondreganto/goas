@@ -7,6 +7,76 @@ import (
 	"time"
 )
 
+func (b *Bot) processNewMembersUpdate(upd tgbotapi.Update) error {
+	b.logger.Info("Processing new members message")
+	for _, member := range *upd.Message.NewChatMembers {
+		if _, err := b.storage.GetOrSetUserFirstSeen(member.ID, time.Now()); err != nil {
+			return fmt.Errorf("setting user %d first seen: %w", member.ID, err)
+		}
+	}
+	b.logger.Info("Deleting new members message")
+	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
+	return nil
+}
+
+func (b *Bot) processMemberLeftUpdate(upd tgbotapi.Update) error {
+	b.logger.Info("Deleting member left message")
+	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
+	return nil
+}
+
+func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
+	b.logger.Info("Processing chat message")
+
+	msg := upd.Message
+	if _, err := b.storage.GetOrSetUserFirstSeen(msg.From.ID, time.Now()); err != nil {
+		return fmt.Errorf("getting user first seen: %w", err)
+	}
+	if _, err := b.storage.IncUserChatMessageCount(msg.From.ID, msg.Chat.ID, 1); err != nil {
+		return fmt.Errorf("incrementing message count: %w", err)
+	}
+
+	if msg.IsCommand() {
+		// Only admins can use commands.
+		if b.storage.IsUserAdmin(msg.From.ID) {
+			switch msg.Command() {
+			case "trust":
+				if err := b.processTrustCommand(msg); err != nil {
+					return fmt.Errorf("processing trust command: %w", err)
+				}
+			case "ban":
+				if err := b.processBanCommand(msg); err != nil {
+					return fmt.Errorf("processing ban command: %w", err)
+				}
+			case "spam":
+				if err := b.processSpamCommand(msg); err != nil {
+					return fmt.Errorf("processing spam command: %w", err)
+				}
+			}
+		}
+		b.logger.Info("Deleting command message in public chat")
+		b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
+		return nil
+	}
+
+	verdict, err := b.isChatMessageSuspicious(upd)
+	if err != nil {
+		return fmt.Errorf("checking suspicious message: %w", err)
+	}
+
+	if verdict == mightBeSpam {
+		if err := b.processSuspiciousMessage(upd); err != nil {
+			return fmt.Errorf("processing suspicious message: %w", err)
+		}
+	} else if verdict == definitelySpam {
+		if err := b.processSpamMessage(upd); err != nil {
+			return fmt.Errorf("processing spam message: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func (b *Bot) processTrustCommand(msg *tgbotapi.Message) error {
 	if msg.ReplyToMessage == nil {
 		b.logger.Warning("Trust command called without reply")
@@ -48,66 +118,29 @@ func (b *Bot) processBanCommand(msg *tgbotapi.Message) error {
 	return nil
 }
 
-func (b *Bot) processNewMembersUpdate(upd tgbotapi.Update) error {
-	b.logger.Info("Processing new members message")
-	for _, member := range *upd.Message.NewChatMembers {
-		if _, err := b.storage.GetOrSetUserFirstSeen(member.ID, time.Now()); err != nil {
-			return fmt.Errorf("setting user %d first seen: %w", member.ID, err)
-		}
+func (b *Bot) processSpamCommand(msg *tgbotapi.Message) error {
+	if msg.ReplyToMessage == nil {
+		b.logger.Warning("Spam command called without reply")
+		return nil
 	}
-	b.logger.Info("Deleting new members message")
-	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
-	return nil
-}
-
-func (b *Bot) processMemberLeftUpdate(upd tgbotapi.Update) error {
-	b.logger.Info("Deleting member left message")
-	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
-	return nil
-}
-
-func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
-	b.logger.Info("Processing chat message")
-
-	msg := upd.Message
-	if _, err := b.storage.GetOrSetUserFirstSeen(msg.From.ID, time.Now()); err != nil {
-		return fmt.Errorf("getting user first seen: %w", err)
-	}
-	if _, err := b.storage.IncUserChatMessageCount(msg.From.ID, msg.Chat.ID, 1); err != nil {
-		return fmt.Errorf("incrementing message count: %w", err)
-	}
-
-	if msg.IsCommand() {
-		if msg.Command() == "trust" && b.storage.IsUserAdmin(msg.From.ID) {
-			if err := b.processTrustCommand(msg); err != nil {
-				return fmt.Errorf("processing trust command: %w", err)
-			}
-		}
-		if msg.Command() == "trust" && b.storage.IsUserAdmin(msg.From.ID) {
-			if err := b.processBanCommand(msg); err != nil {
-				return fmt.Errorf("processing ban command: %w", err)
-			}
-		}
-		b.logger.Info("Deleting command message in public chat")
-		b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
+	reply := msg.ReplyToMessage
+	userID := reply.From.ID
+	if userID == b.api.Self.ID {
+		logrus.Warningf("My messages are not spam")
 		return nil
 	}
 
-	verdict, err := b.isChatMessageSuspicious(upd)
-	if err != nil {
-		return fmt.Errorf("checking suspicious message: %w", err)
-	}
-
-	if verdict == mightBeSpam {
-		if err := b.processSuspiciousMessage(upd); err != nil {
-			return fmt.Errorf("processing suspicious message: %w", err)
-		}
-	} else if verdict == definitelySpam {
-		if err := b.processSpamMessage(upd); err != nil {
-			return fmt.Errorf("processing spam message: %w", err)
+	b.logger.Infof("Received spam message from %d", userID)
+	if reply.Photo != nil {
+		for _, ps := range *reply.Photo {
+			if err := b.addSample(ps.FileID); err != nil {
+				return fmt.Errorf("adding image sample: %w", err)
+			}
 		}
 	}
-
+	if err := b.processBanCommand(msg); err != nil {
+		return fmt.Errorf("banning user: %w", err)
+	}
 	return nil
 }
 

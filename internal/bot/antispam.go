@@ -6,11 +6,6 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/sirupsen/logrus"
 	"go.uber.org/atomic"
-	"image/jpeg"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -149,24 +144,10 @@ func (b *Bot) checkPhoto(logger *logrus.Entry, upd tgbotapi.Update) bool {
 
 func (b *Bot) checkPhotoHashMatches(fileID string, wg *sync.WaitGroup, logger *logrus.Entry) (bool, error) {
 	defer wg.Done()
-	url, err := b.api.GetFileDirectURL(fileID)
-	if err != nil {
-		return false, fmt.Errorf("getting file link: %w", err)
-	}
 
-	resp, err := http.Get(url)
+	img, err := b.downloadImg(fileID, nil)
 	if err != nil {
-		return false, fmt.Errorf("downloaing image: %w", err)
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			logger.Errorf("Error closing response body: %v", err)
-		}
-	}()
-
-	img, err := jpeg.Decode(resp.Body)
-	if err != nil {
-		return false, fmt.Errorf("decoding image: %w", err)
+		return false, fmt.Errorf("downloading img: %w", err)
 	}
 
 	hash, err := goimagehash.PerceptionHash(img)
@@ -175,8 +156,7 @@ func (b *Bot) checkPhotoHashMatches(fileID string, wg *sync.WaitGroup, logger *l
 	}
 
 	for name, other := range b.spamSamples {
-		ih := goimagehash.NewImageHash(other, goimagehash.PHash)
-		dist, err := hash.Distance(ih)
+		dist, err := hash.Distance(other)
 		if err != nil {
 			logger.Errorf("Error calculating distance: %v", err)
 			continue
@@ -188,35 +168,4 @@ func (b *Bot) checkPhotoHashMatches(fileID string, wg *sync.WaitGroup, logger *l
 		}
 	}
 	return false, nil
-}
-
-func loadSamples(path string) (map[string]uint64, error) {
-	files, err := ioutil.ReadDir(path)
-	if err != nil {
-		return nil, fmt.Errorf("listing directory: %w", err)
-	}
-	result := make(map[string]uint64)
-	for _, f := range files {
-		if strings.HasPrefix(f.Name(), ".") || f.IsDir() {
-			continue
-		}
-		fname := filepath.Join(path, f.Name())
-		file, err := os.Open(fname)
-		if err != nil {
-			return nil, fmt.Errorf("opening file %s: %w", fname, err)
-		}
-
-		img, err := jpeg.Decode(file)
-		if err != nil {
-			return nil, fmt.Errorf("decoding jpeg: %w", err)
-		}
-
-		hash, err := goimagehash.PerceptionHash(img)
-		if err != nil {
-			return nil, fmt.Errorf("calculating hash: %w", err)
-		}
-
-		result[f.Name()] = hash.GetHash()
-	}
-	return result, nil
 }
