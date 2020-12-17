@@ -37,6 +37,7 @@ func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
 	}
 
 	if msg.IsCommand() {
+		b.logger.Infof("User %d sent command %s", msg.From.ID, msg.Command())
 		// Only admins can use commands.
 		if b.storage.IsUserAdmin(msg.From.ID) {
 			switch msg.Command() {
