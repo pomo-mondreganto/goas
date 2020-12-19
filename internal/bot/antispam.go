@@ -31,6 +31,7 @@ const (
 
 var bannedStrings = []string{
 	"/joinchat/",
+	"/bit.ly/",
 }
 
 func (b *Bot) isChatMessageSuspicious(upd tgbotapi.Update) (spamVerdict, error) {
