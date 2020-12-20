@@ -2,14 +2,14 @@ package bot
 
 import (
 	"fmt"
-	"github.com/go-telegram-bot-api/telegram-bot-api"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 	"time"
 )
 
 func (b *Bot) processNewMembersUpdate(upd tgbotapi.Update) error {
 	b.logger.Info("Processing new members message")
-	for _, member := range *upd.Message.NewChatMembers {
+	for _, member := range upd.Message.NewChatMembers {
 		if _, err := b.storage.GetOrSetUserFirstSeen(member.ID, time.Now()); err != nil {
 			return fmt.Errorf("setting user %d first seen: %w", member.ID, err)
 		}
@@ -112,11 +112,9 @@ func (b *Bot) processSpamCommand(msg *tgbotapi.Message) error {
 	}
 
 	b.logger.Infof("Received spam message from %d", userID)
-	if reply.Photo != nil {
-		for _, ps := range *reply.Photo {
-			if err := b.addSample(ps.FileID); err != nil {
-				return fmt.Errorf("adding image sample: %w", err)
-			}
+	for _, ps := range reply.Photo {
+		if err := b.addSample(ps.FileID); err != nil {
+			return fmt.Errorf("adding image sample: %w", err)
 		}
 	}
 	if err := b.banSender(reply); err != nil {

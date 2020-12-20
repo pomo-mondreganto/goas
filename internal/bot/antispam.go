@@ -3,7 +3,7 @@ package bot
 import (
 	"fmt"
 	"github.com/corona10/goimagehash"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 	"go.uber.org/atomic"
 	"strings"
@@ -121,15 +121,15 @@ func (b *Bot) checkForward(logger *logrus.Entry, upd tgbotapi.Update) bool {
 }
 
 func (b *Bot) checkPhoto(logger *logrus.Entry, upd tgbotapi.Update) bool {
-	if upd.Message.Photo == nil {
+	if len(upd.Message.Photo) == 0 {
 		logrus.Debug("No photos")
 		return false
 	}
 
 	result := atomic.Bool{}
 	wg := sync.WaitGroup{}
-	wg.Add(len(*upd.Message.Photo))
-	for _, ps := range *upd.Message.Photo {
+	wg.Add(len(upd.Message.Photo))
+	for _, ps := range upd.Message.Photo {
 		go func(fileID string) {
 			match, err := b.checkPhotoHashMatches(fileID, &wg, logger)
 			if err != nil {
@@ -198,9 +198,7 @@ func (b *Bot) banSender(msg *tgbotapi.Message) error {
 		},
 	}
 	b.logger.Infof("Banning user %d", msg.From.ID)
-	if _, err := b.api.KickChatMember(kickCfg); err != nil {
-		return fmt.Errorf("kicking user: %w", err)
-	}
+	b.requestSend(kickCfg)
 	return nil
 }
 

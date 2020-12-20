@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/corona10/goimagehash"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pomo-mondreganto/goas/internal/storage"
 	"github.com/sirupsen/logrus"
 	"sync"
@@ -31,7 +31,6 @@ func New(ctx context.Context, token string, debug bool, samplesPath string, s *s
 	b := Bot{
 		api:         api,
 		toSend:      make(chan tgbotapi.Chattable, 100),
-		toDelete:    make(chan tgbotapi.DeleteMessageConfig, 100),
 		updates:     make(chan tgbotapi.Update, 100),
 		logger:      logger,
 		ctx:         ctx,
@@ -51,7 +50,6 @@ type Bot struct {
 	api         *tgbotapi.BotAPI
 	updates     chan tgbotapi.Update
 	toSend      chan tgbotapi.Chattable
-	toDelete    chan tgbotapi.DeleteMessageConfig
 	logger      *logrus.Entry
 	ctx         context.Context
 	wg          sync.WaitGroup
@@ -69,10 +67,7 @@ func (b *Bot) setUpdatesPolling() {
 	uConf := tgbotapi.NewUpdate(0)
 	uConf.Timeout = 60
 
-	updatesChan, err := b.api.GetUpdatesChan(uConf)
-	if err != nil {
-		b.logger.Fatal("Error getting updated channel: ", err)
-	}
+	updatesChan := b.api.GetUpdatesChan(uConf)
 
 	b.wg.Add(1)
 	go func() {
@@ -100,7 +95,6 @@ loop:
 			if upd.CallbackQuery != nil {
 				if err := b.processCallback(upd); err != nil {
 					b.logger.Error("Error processing callback: ", err)
-					break
 				}
 				break
 			}
@@ -109,20 +103,20 @@ loop:
 				break
 			}
 
-			b.logger.Info("Received an update: %v", upd)
+			b.logger.Infof("Received an update: %+v", upd)
 
 			if upd.Message.NewChatMembers != nil {
 				if err := b.processNewMembersUpdate(upd); err != nil {
 					b.logger.Error("Error processing new members: ", err)
-					break
 				}
+				break
 			}
 
 			if upd.Message.LeftChatMember != nil {
 				if err := b.processMemberLeftUpdate(upd); err != nil {
 					b.logger.Error("Error processing left member: ", err)
-					break
 				}
+				break
 			}
 
 			if err := b.processChatMessageUpdate(upd); err != nil {
@@ -131,20 +125,13 @@ loop:
 			}
 
 		case m := <-b.toSend:
-			b.logger.Debugf("Sending a message: %v", m)
+			b.logger.Debugf("Sending a chattable: %+v", m)
 			_, err := b.api.Send(m)
 			if err != nil {
-				b.logger.Error("Could not send message: ", err)
+				b.logger.Error("Could not send chattable: ", err)
 				break
 			}
-
-		case dmc := <-b.toDelete:
-			b.logger.Debugf("Deleting a message: %v", dmc)
-			_, err := b.api.DeleteMessage(dmc)
-			if err != nil {
-				b.logger.Error("Could not delete message: ", err)
-				break
-			}
+			b.logger.Debugf("Sent successfully")
 
 		case <-b.ctx.Done():
 			b.logger.Info("Context cancelled, exiting")
@@ -158,5 +145,5 @@ func (b *Bot) requestSend(msg tgbotapi.Chattable) {
 }
 
 func (b *Bot) requestDelete(chatID int64, messageID int) {
-	b.toDelete <- tgbotapi.DeleteMessageConfig{ChatID: chatID, MessageID: messageID}
+	b.requestSend(tgbotapi.DeleteMessageConfig{ChatID: chatID, MessageID: messageID})
 }
