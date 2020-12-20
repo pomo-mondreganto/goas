@@ -100,7 +100,6 @@ loop:
 			if upd.CallbackQuery != nil {
 				if err := b.processCallback(upd); err != nil {
 					b.logger.Error("Error processing callback: ", err)
-					break
 				}
 				break
 			}
@@ -114,15 +113,15 @@ loop:
 			if upd.Message.NewChatMembers != nil {
 				if err := b.processNewMembersUpdate(upd); err != nil {
 					b.logger.Error("Error processing new members: ", err)
-					break
 				}
+				break
 			}
 
 			if upd.Message.LeftChatMember != nil {
 				if err := b.processMemberLeftUpdate(upd); err != nil {
 					b.logger.Error("Error processing left member: ", err)
-					break
 				}
+				break
 			}
 
 			if err := b.processChatMessageUpdate(upd); err != nil {
