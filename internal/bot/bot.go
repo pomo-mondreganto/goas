@@ -97,6 +97,14 @@ loop:
 		b.logger.Debug("Waiting for events")
 		select {
 		case upd := <-b.updates:
+			if upd.CallbackQuery != nil {
+				if err := b.processCallback(upd); err != nil {
+					b.logger.Error("Error processing callback: ", err)
+					break
+				}
+				break
+			}
+
 			if upd.Message == nil || upd.Message.Chat == nil || upd.Message.Chat.IsPrivate() {
 				break
 			}

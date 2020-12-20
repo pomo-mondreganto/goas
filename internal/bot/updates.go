@@ -96,27 +96,7 @@ func (b *Bot) processBanCommand(msg *tgbotapi.Message) error {
 		b.logger.Warning("Ban command called without reply")
 		return nil
 	}
-	userID := msg.ReplyToMessage.From.ID
-	if userID == b.api.Self.ID {
-		logrus.Warningf("Trying to ban me")
-		return nil
-	}
-
-	b.logger.Infof("Received command to ban %d", userID)
-	kickCfg := tgbotapi.KickChatMemberConfig{
-		ChatMemberConfig: tgbotapi.ChatMemberConfig{
-			ChatID: msg.Chat.ID,
-			UserID: userID,
-		},
-		UntilDate: 0,
-	}
-	b.logger.Infof("Kicking user %d", userID)
-	if _, err := b.api.KickChatMember(kickCfg); err != nil {
-		return fmt.Errorf("kicking user: %w", err)
-	}
-	b.logger.Infof("Deleting message %d from %d", msg.ReplyToMessage.MessageID, userID)
-	b.requestDelete(msg.Chat.ID, msg.ReplyToMessage.MessageID)
-	return nil
+	return b.banSender(msg.ReplyToMessage)
 }
 
 func (b *Bot) processSpamCommand(msg *tgbotapi.Message) error {
@@ -139,26 +119,91 @@ func (b *Bot) processSpamCommand(msg *tgbotapi.Message) error {
 			}
 		}
 	}
-	if err := b.processBanCommand(msg); err != nil {
+	if err := b.banSender(reply); err != nil {
 		return fmt.Errorf("banning user: %w", err)
 	}
 	return nil
 }
 
 func (b *Bot) processSuspiciousMessage(upd tgbotapi.Update) error {
-	m := tgbotapi.NewMessage(upd.Message.Chat.ID, "This might be spam")
-	m.ParseMode = "markdown"
-	m.ReplyToMessageID = upd.Message.MessageID
+	m := getSpamVoteMessage(upd.Message, "Is this message spam?")
 	b.logger.Info("Sending suspicious message notification")
 	b.requestSend(m)
 	return nil
 }
 
 func (b *Bot) processSpamMessage(upd tgbotapi.Update) error {
-	m := tgbotapi.NewMessage(upd.Message.Chat.ID, "This is definitely spam")
+	m := getSpamVoteMessage(upd.Message, "This message looks like spam. Is it?")
 	m.ParseMode = "markdown"
 	m.ReplyToMessageID = upd.Message.MessageID
 	b.logger.Info("Sending spam message notification")
 	b.requestSend(m)
+	return nil
+}
+
+func (b *Bot) processCallback(upd tgbotapi.Update) error {
+	cb := *upd.CallbackQuery
+	b.logger.Debugf("Received callback: %+v", cb)
+	if cb.Message == nil {
+		b.logger.Warning("Callback without message, skipping")
+	}
+	if cb.Message.Chat == nil {
+		b.logger.Warning("Callback not in chat, skipping")
+	}
+	if cb.Message.ReplyToMessage == nil {
+		b.logger.Warning("Callback message is not a reply, skipping")
+	}
+	userID := cb.From.ID
+	chatID := cb.Message.Chat.ID
+	msgID := cb.Message.MessageID
+	reply := cb.Message.ReplyToMessage
+	b.logger.Debugf("User id: %d, Message ID: %d, reply: %#v", userID, msgID, reply)
+
+	vote := cb.Data == voteSpamCallback
+
+	if err := b.storage.VoteSpam(userID, chatID, msgID, vote); err != nil {
+		return fmt.Errorf("voting: %w", err)
+	}
+
+	votesFor, votesAgainst, err := b.storage.GetVotes(chatID, msgID)
+	if err != nil {
+		return fmt.Errorf("getting votes: %w", err)
+	}
+
+	edit := tgbotapi.EditMessageTextConfig{
+		BaseEdit: tgbotapi.BaseEdit{
+			ChatID:    chatID,
+			MessageID: msgID,
+		},
+		ParseMode: "markdown",
+	}
+
+	var content string
+	var markup *tgbotapi.InlineKeyboardMarkup
+	final, ban := b.checkVotes(votesFor, votesAgainst, userID, vote)
+	b.logger.Debugf("Verdict for vote: final=%t ban=%t", final, ban)
+
+	if final {
+		if ban {
+			b.logger.Infof("Decided to ban user with %d for, %d against votes", votesFor, votesAgainst)
+			content = "The vote's finished, user is banned."
+		} else {
+			b.logger.Infof("Decided not to ban user with %d for, %d against votes", votesFor, votesAgainst)
+			content = "The vote's finished, user is not banned."
+		}
+	} else {
+		markup = getSpamVoteMarkup()
+		content = fmt.Sprintf("Is this spam?\n\nVotes `spam`: %d\n\nVotes `not spam`: %d", votesFor, votesAgainst)
+	}
+	edit.Text = content
+	edit.BaseEdit.ReplyMarkup = markup
+	b.requestSend(edit)
+
+	if final && ban {
+		if err := b.banSender(reply); err != nil {
+			return fmt.Errorf("banning sender: %w", err)
+		}
+	}
+
 	return nil
 }

@@ -27,6 +27,8 @@ const (
 	suspiciousPhotoMsgThreshold   = 5
 
 	imageDistanceThreshold = 24
+
+	votesToBan = 5
 )
 
 var bannedStrings = []string{
@@ -169,4 +171,45 @@ func (b *Bot) checkPhotoHashMatches(fileID string, wg *sync.WaitGroup, logger *l
 		}
 	}
 	return false, nil
+}
+
+func (b *Bot) banSender(msg *tgbotapi.Message) error {
+	userID := msg.From.ID
+	chatID := msg.Chat.ID
+	msgID := msg.MessageID
+
+	if userID == b.api.Self.ID {
+		logrus.Warningf("Trying to ban me")
+		return nil
+	}
+
+	if b.storage.IsUserAdmin(userID) {
+		logrus.Warningf("Trying to ban admin")
+		return nil
+	}
+
+	b.logger.Infof("Deleting message %d from %d", msgID, userID)
+	b.requestDelete(chatID, msgID)
+
+	kickCfg := tgbotapi.KickChatMemberConfig{
+		ChatMemberConfig: tgbotapi.ChatMemberConfig{
+			ChatID: chatID,
+			UserID: userID,
+		},
+	}
+	b.logger.Infof("Banning user %d", msg.From.ID)
+	if _, err := b.api.KickChatMember(kickCfg); err != nil {
+		return fmt.Errorf("kicking user: %w", err)
+	}
+	return nil
+}
+
+func (b *Bot) checkVotes(votesFor, votesAgainst int, userID int, userVote bool) (finish bool, verdict bool) {
+	if b.storage.IsUserAdmin(userID) {
+		return true, userVote
+	}
+	if votesFor >= votesToBan || votesAgainst >= votesToBan {
+		return true, votesFor > votesAgainst
+	}
+	return false, false
 }

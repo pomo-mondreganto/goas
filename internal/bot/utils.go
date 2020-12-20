@@ -2,11 +2,17 @@ package bot
 
 import (
 	"fmt"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"image"
 	"image/jpeg"
 	"io"
 	"io/ioutil"
 	"net/http"
+)
+
+var (
+	voteSpamCallback    = "vote_spam"
+	voteNotSpamCallback = "vote_not_spam"
 )
 
 func (b *Bot) downloadImg(fileID string, saveTo io.Writer) (image.Image, error) {
@@ -34,4 +40,29 @@ func (b *Bot) downloadImg(fileID string, saveTo io.Writer) (image.Image, error) 
 		return nil, fmt.Errorf("decoding image: %w", err)
 	}
 	return img, nil
+}
+
+func getSpamVoteMarkup() *tgbotapi.InlineKeyboardMarkup {
+	return &tgbotapi.InlineKeyboardMarkup{
+		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
+			{
+				tgbotapi.InlineKeyboardButton{
+					Text:         "Spam",
+					CallbackData: &voteSpamCallback,
+				},
+				tgbotapi.InlineKeyboardButton{
+					Text:         "Not spam",
+					CallbackData: &voteNotSpamCallback,
+				},
+			},
+		},
+	}
+}
+
+func getSpamVoteMessage(msg *tgbotapi.Message, content string) tgbotapi.MessageConfig {
+	m := tgbotapi.NewMessage(msg.Chat.ID, content)
+	m.ParseMode = "markdown"
+	m.ReplyToMessageID = msg.MessageID
+	m.ReplyMarkup = getSpamVoteMarkup()
+	return m
 }

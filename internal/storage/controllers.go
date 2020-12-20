@@ -42,11 +42,19 @@ func (s Storage) GetOrSetUserFirstSeen(userID int, firstSeen time.Time) (time.Ti
 }
 
 func (s Storage) IncUserChatMessageCount(userID int, chatID int64, add int64) (int64, error) {
-	key := chatMessagesKey(chatID)
+	key := chatMessageCountKey(chatID)
 	return s.addToUserContextKey(userID, key, add)
 }
 
 func (s Storage) GetUserChatMessageCount(userID int, chatID int64) (int64, error) {
-	key := chatMessagesKey(chatID)
+	key := chatMessageCountKey(chatID)
 	return s.addToUserContextKey(userID, key, 0)
+}
+
+func (s Storage) VoteSpam(userID int, chatID int64, messageID int, spam bool) error {
+	return s.addVote(spam, userID, chatID, messageID)
+}
+
+func (s Storage) GetVotes(chatID int64, messageID int) (int, int, error) {
+	return s.getVoteDistribution(chatID, messageID)
 }
