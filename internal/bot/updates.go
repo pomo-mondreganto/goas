@@ -170,39 +170,39 @@ func (b *Bot) processCallback(upd tgbotapi.Update) error {
 		return fmt.Errorf("getting votes: %w", err)
 	}
 
-	edit := tgbotapi.EditMessageTextConfig{
-		BaseEdit: tgbotapi.BaseEdit{
-			ChatID:    chatID,
-			MessageID: msgID,
-		},
-		ParseMode: "markdown",
-	}
-
-	var content string
-	var markup *tgbotapi.InlineKeyboardMarkup
 	final, ban := b.checkVotes(votesFor, votesAgainst, userID, vote)
 	b.logger.Debugf("Verdict for vote: final=%t ban=%t", final, ban)
 
 	if final {
 		if ban {
 			b.logger.Infof("Decided to ban user with %d for, %d against votes", votesFor, votesAgainst)
-			content = "The vote's finished, user is banned."
+			if reply.Photo != nil {
+				b.logger.Info("Adding photos as samples")
+				for _, ps := range *reply.Photo {
+					if err := b.addSample(ps.FileID); err != nil {
+						return fmt.Errorf("adding image sample: %w", err)
+					}
+				}
+			}
+
+			if err := b.banSender(reply); err != nil {
+				return fmt.Errorf("banning sender: %w", err)
+			}
 		} else {
 			b.logger.Infof("Decided not to ban user with %d for, %d against votes", votesFor, votesAgainst)
-			content = "The vote's finished, user is not banned."
 		}
+		b.requestDelete(chatID, msgID)
 	} else {
-		markup = getSpamVoteMarkup()
-		content = fmt.Sprintf("Is this spam?\n\nVotes `spam`: %d\n\nVotes `not spam`: %d", votesFor, votesAgainst)
-	}
-	edit.Text = content
-	edit.BaseEdit.ReplyMarkup = markup
-	b.requestSend(edit)
-
-	if final && ban {
-		if err := b.banSender(reply); err != nil {
-			return fmt.Errorf("banning sender: %w", err)
+		edit := tgbotapi.EditMessageTextConfig{
+			BaseEdit: tgbotapi.BaseEdit{
+				ChatID:      chatID,
+				MessageID:   msgID,
+				ReplyMarkup: getSpamVoteMarkup(),
+			},
+			ParseMode: "markdown",
 		}
+		edit.Text = fmt.Sprintf("Is this spam?\n\nVotes `spam`: %d\n\nVotes `not spam`: %d", votesFor, votesAgainst)
+		b.requestSend(edit)
 	}
 
 	return nil

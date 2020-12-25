@@ -26,7 +26,6 @@ func New(ctx context.Context, token string, debug bool, samplesPath string, s *s
 		return nil, fmt.Errorf("reading spam samples: %w", err)
 	}
 	logger.Infof("Loaded %d spam samples", len(samples))
-	logger.Debugf("Samples: %+v", samples)
 
 	b := Bot{
 		api:         api,
