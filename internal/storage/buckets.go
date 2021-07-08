@@ -1,8 +1,10 @@
 package storage
 
 import (
-	"github.com/boltdb/bolt"
+	"fmt"
+
 	"github.com/sirupsen/logrus"
+	bolt "go.etcd.io/bbolt"
 )
 
 const (
@@ -17,12 +19,15 @@ var bucketNames = []string{
 
 func (s Storage) initBuckets() error {
 	logrus.Info("Initializing buckets")
-	return s.db.Update(func(tx *bolt.Tx) error {
+	if err := s.db.Update(func(tx *bolt.Tx) error {
 		for _, name := range bucketNames {
 			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
-				return err
+				return fmt.Errorf("creating bucket %v: %w", name, err)
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return fmt.Errorf("executing transaction: %w", err)
+	}
+	return nil
 }

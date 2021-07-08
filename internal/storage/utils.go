@@ -6,11 +6,11 @@ import (
 	"strconv"
 )
 
-func intToBytes(i int) []byte {
-	return []byte(strconv.FormatInt(int64(i), 10))
+func intToBytes(i int64) []byte {
+	return []byte(strconv.FormatInt(i, 10))
 }
 
-func formatUID(userID int) []byte {
+func formatUID(userID int64) []byte {
 	return intToBytes(userID)
 }
 
@@ -35,8 +35,5 @@ func formatVote(vote bool) []byte {
 }
 
 func parseVote(data []byte) bool {
-	if bytes.Equal(data, []byte("1")) {
-		return true
-	}
-	return false
+	return bytes.Equal(data, []byte("1"))
 }

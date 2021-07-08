@@ -1,15 +1,16 @@
 module github.com/pomo-mondreganto/goas
 
-go 1.15
+go 1.16
 
 require (
-	github.com/boltdb/bolt v1.3.1
 	github.com/corona10/goimagehash v1.0.3
-	github.com/go-telegram-bot-api/telegram-bot-api v4.6.4+incompatible
-	github.com/google/uuid v1.1.2
-	github.com/sirupsen/logrus v1.7.0
+	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.0.0-rc1.0.20210608165722-fb1de2fb48dd
+	github.com/google/uuid v1.2.0
+	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/pflag v1.0.5
-	github.com/spf13/viper v1.7.1
-	github.com/technoweenie/multipartstreamer v1.0.1 // indirect
-	go.uber.org/atomic v1.4.0
+	github.com/spf13/viper v1.8.1
+	go.etcd.io/bbolt v1.3.6
+	go.uber.org/atomic v1.8.0
+	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c // indirect
+	golang.org/x/text v0.3.6 // indirect
 )

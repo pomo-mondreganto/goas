@@ -1,13 +1,15 @@
 package bot
 
 import (
+	"context"
 	"fmt"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"image"
 	"image/jpeg"
 	"io"
 	"io/ioutil"
 	"net/http"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 var (
@@ -15,13 +17,18 @@ var (
 	voteNotSpamCallback = "vote_not_spam"
 )
 
-func (b *Bot) downloadImg(fileID string, saveTo io.Writer) (image.Image, error) {
+func (b *Bot) downloadImg(ctx context.Context, fileID string, saveTo io.Writer) (image.Image, error) {
 	url, err := b.api.GetFileDirectURL(fileID)
 	if err != nil {
 		return nil, fmt.Errorf("getting file link: %w", err)
 	}
 
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating download request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("downloaing image: %w", err)
 	}

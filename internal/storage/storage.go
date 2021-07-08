@@ -2,13 +2,14 @@ package storage
 
 import (
 	"fmt"
-	"github.com/boltdb/bolt"
-	path2 "path"
+	"path"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 func New(dir string) (*Storage, error) {
-	path := path2.Join(dir, "data.db")
-	db, err := bolt.Open(path, 0600, nil)
+	dbPath := path.Join(dir, "data.db")
+	db, err := bolt.Open(dbPath, 0600, nil)
 	if err != nil {
 		return nil, fmt.Errorf("opening database file: %w", err)
 	}

@@ -1,15 +1,17 @@
 package bot
 
 import (
+	"context"
 	"fmt"
-	"github.com/go-telegram-bot-api/telegram-bot-api"
-	"github.com/sirupsen/logrus"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sirupsen/logrus"
 )
 
 func (b *Bot) processNewMembersUpdate(upd tgbotapi.Update) error {
 	b.logger.Info("Processing new members message")
-	for _, member := range *upd.Message.NewChatMembers {
+	for _, member := range upd.Message.NewChatMembers {
 		if _, err := b.storage.GetOrSetUserFirstSeen(member.ID, time.Now()); err != nil {
 			return fmt.Errorf("setting user %d first seen: %w", member.ID, err)
 		}
@@ -19,13 +21,12 @@ func (b *Bot) processNewMembersUpdate(upd tgbotapi.Update) error {
 	return nil
 }
 
-func (b *Bot) processMemberLeftUpdate(upd tgbotapi.Update) error {
+func (b *Bot) processMemberLeftUpdate(upd tgbotapi.Update) {
 	b.logger.Info("Deleting member left message")
 	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
-	return nil
 }
 
-func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
+func (b *Bot) processChatMessageUpdate(ctx context.Context, upd tgbotapi.Update) error {
 	b.logger.Info("Processing chat message")
 
 	msg := upd.Message
@@ -46,11 +47,9 @@ func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
 					return fmt.Errorf("processing trust command: %w", err)
 				}
 			case "ban":
-				if err := b.processBanCommand(msg); err != nil {
-					return fmt.Errorf("processing ban command: %w", err)
-				}
+				b.processBanCommand(msg)
 			case "spam":
-				if err := b.processSpamCommand(msg); err != nil {
+				if err := b.processSpamCommand(ctx, msg); err != nil {
 					return fmt.Errorf("processing spam command: %w", err)
 				}
 			}
@@ -60,19 +59,15 @@ func (b *Bot) processChatMessageUpdate(upd tgbotapi.Update) error {
 		return nil
 	}
 
-	verdict, err := b.isChatMessageSuspicious(upd)
+	verdict, err := b.isChatMessageSuspicious(ctx, upd)
 	if err != nil {
 		return fmt.Errorf("checking suspicious message: %w", err)
 	}
 
 	if verdict == mightBeSpam {
-		if err := b.processSuspiciousMessage(upd); err != nil {
-			return fmt.Errorf("processing suspicious message: %w", err)
-		}
+		b.processSuspiciousMessage(upd)
 	} else if verdict == definitelySpam {
-		if err := b.processSpamMessage(upd); err != nil {
-			return fmt.Errorf("processing spam message: %w", err)
-		}
+		b.processSpamMessage(upd)
 	}
 
 	return nil
@@ -91,15 +86,15 @@ func (b *Bot) processTrustCommand(msg *tgbotapi.Message) error {
 	return nil
 }
 
-func (b *Bot) processBanCommand(msg *tgbotapi.Message) error {
+func (b *Bot) processBanCommand(msg *tgbotapi.Message) {
 	if msg.ReplyToMessage == nil {
 		b.logger.Warning("Ban command called without reply")
-		return nil
+		return
 	}
-	return b.banSender(msg.ReplyToMessage)
+	b.banSender(msg.ReplyToMessage)
 }
 
-func (b *Bot) processSpamCommand(msg *tgbotapi.Message) error {
+func (b *Bot) processSpamCommand(ctx context.Context, msg *tgbotapi.Message) error {
 	if msg.ReplyToMessage == nil {
 		b.logger.Warning("Spam command called without reply")
 		return nil
@@ -107,51 +102,48 @@ func (b *Bot) processSpamCommand(msg *tgbotapi.Message) error {
 	reply := msg.ReplyToMessage
 	userID := reply.From.ID
 	if userID == b.api.Self.ID {
-		logrus.Warningf("My messages are not spam")
+		logrus.Warning("My messages are not spam")
 		return nil
 	}
 
 	b.logger.Infof("Received spam message from %d", userID)
-	if reply.Photo != nil {
-		for _, ps := range *reply.Photo {
-			if err := b.addSample(ps.FileID); err != nil {
-				return fmt.Errorf("adding image sample: %w", err)
-			}
+	for _, ps := range reply.Photo {
+		if err := b.addSample(ctx, ps.FileID); err != nil {
+			return fmt.Errorf("adding image sample: %w", err)
 		}
 	}
-	if err := b.banSender(reply); err != nil {
-		return fmt.Errorf("banning user: %w", err)
-	}
+	b.banSender(reply)
 	return nil
 }
 
-func (b *Bot) processSuspiciousMessage(upd tgbotapi.Update) error {
+func (b *Bot) processSuspiciousMessage(upd tgbotapi.Update) {
 	m := getSpamVoteMessage(upd.Message, "Is this message spam?")
 	b.logger.Info("Sending suspicious message notification")
 	b.requestSend(m)
-	return nil
 }
 
-func (b *Bot) processSpamMessage(upd tgbotapi.Update) error {
+func (b *Bot) processSpamMessage(upd tgbotapi.Update) {
 	m := getSpamVoteMessage(upd.Message, "This message looks like spam. Is it?")
 	m.ParseMode = "markdown"
 	m.ReplyToMessageID = upd.Message.MessageID
 	b.logger.Info("Sending spam message notification")
 	b.requestSend(m)
-	return nil
 }
 
-func (b *Bot) processCallback(upd tgbotapi.Update) error {
+func (b *Bot) processCallback(ctx context.Context, upd tgbotapi.Update) error {
 	cb := *upd.CallbackQuery
 	b.logger.Debugf("Received callback: %+v", cb)
 	if cb.Message == nil {
 		b.logger.Warning("Callback without message, skipping")
+		return nil
 	}
 	if cb.Message.Chat == nil {
 		b.logger.Warning("Callback not in chat, skipping")
+		return nil
 	}
 	if cb.Message.ReplyToMessage == nil {
 		b.logger.Warning("Callback message is not a reply, skipping")
+		return nil
 	}
 	userID := cb.From.ID
 	chatID := cb.Message.Chat.ID
@@ -174,24 +166,23 @@ func (b *Bot) processCallback(upd tgbotapi.Update) error {
 	b.logger.Debugf("Verdict for vote: final=%t ban=%t", final, ban)
 
 	if final {
+		defer b.requestDelete(chatID, msgID)
+
 		if ban {
+			defer b.banSender(reply)
+
 			b.logger.Infof("Decided to ban user with %d for, %d against votes", votesFor, votesAgainst)
-			if reply.Photo != nil {
+			if len(reply.Photo) > 0 {
 				b.logger.Info("Adding photos as samples")
-				for _, ps := range *reply.Photo {
-					if err := b.addSample(ps.FileID); err != nil {
+				for _, ps := range reply.Photo {
+					if err := b.addSample(ctx, ps.FileID); err != nil {
 						return fmt.Errorf("adding image sample: %w", err)
 					}
 				}
 			}
-
-			if err := b.banSender(reply); err != nil {
-				return fmt.Errorf("banning sender: %w", err)
-			}
 		} else {
 			b.logger.Infof("Decided not to ban user with %d for, %d against votes", votesFor, votesAgainst)
 		}
-		b.requestDelete(chatID, msgID)
 	} else {
 		edit := tgbotapi.EditMessageTextConfig{
 			BaseEdit: tgbotapi.BaseEdit{

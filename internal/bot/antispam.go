@@ -1,14 +1,16 @@
 package bot
 
 import (
+	"context"
 	"fmt"
-	"github.com/corona10/goimagehash"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
-	"github.com/sirupsen/logrus"
-	"go.uber.org/atomic"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/corona10/goimagehash"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sirupsen/logrus"
+	"go.uber.org/atomic"
 )
 
 type spamVerdict int
@@ -36,7 +38,7 @@ var bannedStrings = []string{
 	"/bit.ly/",
 }
 
-func (b *Bot) isChatMessageSuspicious(upd tgbotapi.Update) (spamVerdict, error) {
+func (b *Bot) isChatMessageSuspicious(ctx context.Context, upd tgbotapi.Update) (spamVerdict, error) {
 	authorID := upd.Message.From.ID
 	chatID := upd.Message.Chat.ID
 
@@ -86,7 +88,7 @@ func (b *Bot) isChatMessageSuspicious(upd tgbotapi.Update) (spamVerdict, error) 
 	}
 
 	logger.Debugf("Photos info: %v", upd.Message.Photo)
-	if msgCount < suspiciousPhotoMsgThreshold && b.checkPhoto(logger, upd) {
+	if msgCount < suspiciousPhotoMsgThreshold && b.checkPhoto(ctx, logger, upd) {
 		logger.Debugf("Photo matches spam sample")
 		return definitelySpam, nil
 	}
@@ -120,7 +122,7 @@ func (b *Bot) checkForward(logger *logrus.Entry, upd tgbotapi.Update) bool {
 	return true
 }
 
-func (b *Bot) checkPhoto(logger *logrus.Entry, upd tgbotapi.Update) bool {
+func (b *Bot) checkPhoto(ctx context.Context, logger *logrus.Entry, upd tgbotapi.Update) bool {
 	if upd.Message.Photo == nil {
 		logrus.Debug("No photos")
 		return false
@@ -128,10 +130,10 @@ func (b *Bot) checkPhoto(logger *logrus.Entry, upd tgbotapi.Update) bool {
 
 	result := atomic.Bool{}
 	wg := sync.WaitGroup{}
-	wg.Add(len(*upd.Message.Photo))
-	for _, ps := range *upd.Message.Photo {
+	wg.Add(len(upd.Message.Photo))
+	for _, ps := range upd.Message.Photo {
 		go func(fileID string) {
-			match, err := b.checkPhotoHashMatches(fileID, &wg, logger)
+			match, err := b.checkPhotoHashMatches(ctx, fileID, &wg, logger)
 			if err != nil {
 				logger.Errorf("Error checking photo hash: %v", err)
 			}
@@ -145,10 +147,10 @@ func (b *Bot) checkPhoto(logger *logrus.Entry, upd tgbotapi.Update) bool {
 	return result.Load()
 }
 
-func (b *Bot) checkPhotoHashMatches(fileID string, wg *sync.WaitGroup, logger *logrus.Entry) (bool, error) {
+func (b *Bot) checkPhotoHashMatches(ctx context.Context, fileID string, wg *sync.WaitGroup, logger *logrus.Entry) (bool, error) {
 	defer wg.Done()
 
-	img, err := b.downloadImg(fileID, nil)
+	img, err := b.downloadImg(ctx, fileID, nil)
 	if err != nil {
 		return false, fmt.Errorf("downloading img: %w", err)
 	}
@@ -173,19 +175,19 @@ func (b *Bot) checkPhotoHashMatches(fileID string, wg *sync.WaitGroup, logger *l
 	return false, nil
 }
 
-func (b *Bot) banSender(msg *tgbotapi.Message) error {
+func (b *Bot) banSender(msg *tgbotapi.Message) {
 	userID := msg.From.ID
 	chatID := msg.Chat.ID
 	msgID := msg.MessageID
 
 	if userID == b.api.Self.ID {
-		logrus.Warningf("Trying to ban me")
-		return nil
+		logrus.Warning("Trying to ban me")
+		return
 	}
 
 	if b.storage.IsUserAdmin(userID) {
-		logrus.Warningf("Trying to ban admin")
-		return nil
+		logrus.Warning("Trying to ban admin")
+		return
 	}
 
 	b.logger.Infof("Deleting message %d from %d", msgID, userID)
@@ -198,13 +200,10 @@ func (b *Bot) banSender(msg *tgbotapi.Message) error {
 		},
 	}
 	b.logger.Infof("Banning user %d", msg.From.ID)
-	if _, err := b.api.KickChatMember(kickCfg); err != nil {
-		return fmt.Errorf("kicking user: %w", err)
-	}
-	return nil
+	b.requestSend(kickCfg)
 }
 
-func (b *Bot) checkVotes(votesFor, votesAgainst int, userID int, userVote bool) (finish bool, verdict bool) {
+func (b *Bot) checkVotes(votesFor, votesAgainst int, userID int64, userVote bool) (finish bool, verdict bool) {
 	if b.storage.IsUserAdmin(userID) {
 		return true, userVote
 	}

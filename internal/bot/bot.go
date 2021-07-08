@@ -3,11 +3,13 @@ package bot
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
+
 	"github.com/corona10/goimagehash"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pomo-mondreganto/goas/internal/storage"
 	"github.com/sirupsen/logrus"
-	"sync"
 )
 
 func New(ctx context.Context, token string, debug bool, samplesPath string, s *storage.Storage) (*Bot, error) {
@@ -29,19 +31,17 @@ func New(ctx context.Context, token string, debug bool, samplesPath string, s *s
 
 	b := Bot{
 		api:         api,
-		toSend:      make(chan tgbotapi.Chattable, 100),
-		toDelete:    make(chan tgbotapi.DeleteMessageConfig, 100),
+		requests:    make(chan tgbotapi.Chattable, 100),
 		updates:     make(chan tgbotapi.Update, 100),
 		logger:      logger,
-		ctx:         ctx,
 		storage:     s,
 		spamSamples: samples,
 		samplesPath: samplesPath,
 	}
 
-	b.setUpdatesPolling()
-	b.wg.Add(1)
-	go b.processEvents()
+	b.wg.Add(2)
+	go b.setUpdatesPolling(ctx)
+	go b.processEvents(ctx)
 
 	return &b, nil
 }
@@ -49,10 +49,8 @@ func New(ctx context.Context, token string, debug bool, samplesPath string, s *s
 type Bot struct {
 	api         *tgbotapi.BotAPI
 	updates     chan tgbotapi.Update
-	toSend      chan tgbotapi.Chattable
-	toDelete    chan tgbotapi.DeleteMessageConfig
+	requests    chan tgbotapi.Chattable
 	logger      *logrus.Entry
-	ctx         context.Context
 	wg          sync.WaitGroup
 	storage     *storage.Storage
 	spamSamples map[string]*goimagehash.ImageHash
@@ -64,31 +62,26 @@ func (b *Bot) Wait() {
 	b.logger.Infof("Shutdown complete")
 }
 
-func (b *Bot) setUpdatesPolling() {
+func (b *Bot) setUpdatesPolling(ctx context.Context) {
+	defer b.wg.Done()
+
 	uConf := tgbotapi.NewUpdate(0)
 	uConf.Timeout = 60
 
-	updatesChan, err := b.api.GetUpdatesChan(uConf)
-	if err != nil {
-		b.logger.Fatal("Error getting updated channel: ", err)
-	}
+	updatesChan := b.api.GetUpdatesChan(uConf)
 
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-	loop:
-		for {
-			select {
-			case <-b.ctx.Done():
-				break loop
-			case upd := <-updatesChan:
-				b.updates <- upd
-			}
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			break loop
+		case upd := <-updatesChan:
+			b.updates <- upd
 		}
-	}()
+	}
 }
 
-func (b *Bot) processEvents() {
+func (b *Bot) processEvents(ctx context.Context) {
 	defer b.wg.Done()
 
 loop:
@@ -97,8 +90,8 @@ loop:
 		select {
 		case upd := <-b.updates:
 			if upd.CallbackQuery != nil {
-				if err := b.processCallback(upd); err != nil {
-					b.logger.Error("Error processing callback: ", err)
+				if err := b.processCallback(ctx, upd); err != nil {
+					b.logger.Errorf("Error processing callback: %v", err)
 				}
 				break
 			}
@@ -107,44 +100,46 @@ loop:
 				break
 			}
 
-			b.logger.Info("Received an update: %v", upd)
+			b.logger.Infof("Received an update: %v", upd)
 
 			if upd.Message.NewChatMembers != nil {
 				if err := b.processNewMembersUpdate(upd); err != nil {
-					b.logger.Error("Error processing new members: ", err)
+					b.logger.Errorf("Error processing new members: %v", err)
 				}
 				break
 			}
 
 			if upd.Message.LeftChatMember != nil {
-				if err := b.processMemberLeftUpdate(upd); err != nil {
-					b.logger.Error("Error processing left member: ", err)
+				b.processMemberLeftUpdate(upd)
+				break
+			}
+
+			if err := b.processChatMessageUpdate(ctx, upd); err != nil {
+				b.logger.Errorf("Error processing chat message: %v", err)
+				break
+			}
+
+		case m := <-b.requests:
+			b.logger.Debugf("Received a request: %#v", m)
+
+			var err error
+			switch m.(type) {
+			case tgbotapi.EditMessageTextConfig:
+				if _, err = b.api.Send(m); err != nil && strings.Contains(err.Error(), "not modified") {
+					err = nil
 				}
-				break
+			case tgbotapi.DeleteMessageConfig, tgbotapi.KickChatMemberConfig:
+				_, err = b.api.Request(m)
+			default:
+				_, err = b.api.Send(m)
 			}
 
-			if err := b.processChatMessageUpdate(upd); err != nil {
-				b.logger.Error("Error processing chat message: ", err)
-				break
-			}
-
-		case m := <-b.toSend:
-			b.logger.Debugf("Sending a message: %v", m)
-			_, err := b.api.Send(m)
 			if err != nil {
-				b.logger.Error("Could not send message: ", err)
+				b.logger.Errorf("Error sending request: %v", err)
 				break
 			}
 
-		case dmc := <-b.toDelete:
-			b.logger.Debugf("Deleting a message: %v", dmc)
-			_, err := b.api.DeleteMessage(dmc)
-			if err != nil {
-				b.logger.Error("Could not delete message: ", err)
-				break
-			}
-
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			b.logger.Info("Context cancelled, exiting")
 			break loop
 		}
@@ -152,9 +147,9 @@ loop:
 }
 
 func (b *Bot) requestSend(msg tgbotapi.Chattable) {
-	b.toSend <- msg
+	b.requests <- msg
 }
 
 func (b *Bot) requestDelete(chatID int64, messageID int) {
-	b.toDelete <- tgbotapi.DeleteMessageConfig{ChatID: chatID, MessageID: messageID}
+	b.requests <- tgbotapi.DeleteMessageConfig{ChatID: chatID, MessageID: messageID}
 }

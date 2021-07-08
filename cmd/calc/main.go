@@ -1,11 +1,12 @@
 package main
 
 import (
+	"image/jpeg"
+	"os"
+
 	"github.com/corona10/goimagehash"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
-	"image/jpeg"
-	"os"
 )
 
 var (

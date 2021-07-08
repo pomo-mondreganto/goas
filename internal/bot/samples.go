@@ -1,19 +1,21 @@
 package bot
 
 import (
+	"context"
 	"fmt"
-	"github.com/corona10/goimagehash"
-	"github.com/google/uuid"
 	"image/jpeg"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/corona10/goimagehash"
+	"github.com/google/uuid"
 )
 
 const interestingSampleThreshold = 5
 
-func (b *Bot) addSample(fileID string) error {
+func (b *Bot) addSample(ctx context.Context, fileID string) error {
 	filename := fmt.Sprintf("sample_%s.jpeg", uuid.New())
 	dst := filepath.Join(b.samplesPath, filename)
 	b.logger.Debugf("Saving new sample to %s", dst)
@@ -33,7 +35,7 @@ func (b *Bot) addSample(fileID string) error {
 		}
 	}()
 
-	img, err := b.downloadImg(fileID, file)
+	img, err := b.downloadImg(ctx, fileID, file)
 	if err != nil {
 		return fmt.Errorf("downloading image: %w", err)
 	}
