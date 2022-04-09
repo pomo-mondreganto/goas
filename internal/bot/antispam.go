@@ -73,8 +73,7 @@ func (b *Bot) isChatMessageSuspicious(ctx context.Context, upd tgbotapi.Update) 
 
 	logger.Debugf("Message count: %d", msgCount)
 
-	content := upd.Message.Text
-	if b.banlist.Contains(content) {
+	if b.banlist.Contains(upd.Message.Text) {
 		logger.Debug("Contains banned string, suspicious")
 		return mightBeSpam, nil
 	}
