@@ -39,8 +39,8 @@ func main() {
 
 func setupConfig() {
 	pflag.String("log_level", "INFO", "Log level {INFO|DEBUG|WARNING|ERROR}")
-	pflag.StringP("data_dir", "d", "data", "Data directory")
-	pflag.StringP("samples_dir", "s", "resources", "Spam samples directory")
+	pflag.StringP("data", "d", "data", "Data directory")
+	pflag.StringP("samples", "s", "resources", "Spam samples directory")
 	pflag.String("dictionary", "banlist.txt", "Path to banned patterns text file")
 
 	pflag.Parse()
@@ -82,7 +82,7 @@ func setLogLevel() {
 }
 
 func createStorage() *storage.Storage {
-	s, err := storage.New(viper.GetString("data_dir"))
+	s, err := storage.New(viper.GetString("data"))
 	if err != nil {
 		logrus.Fatalf("Error creating storage: %v", err)
 	}
@@ -92,7 +92,7 @@ func createStorage() *storage.Storage {
 func createBot(ctx context.Context, s *storage.Storage, l *banlist.BanList) *bot.Bot {
 	token := viper.GetString("token")
 	debug := viper.GetBool("debug")
-	samples := viper.GetString("samples_dir")
+	samples := viper.GetString("samples")
 	b, err := bot.New(ctx, token, debug, samples, s, l)
 	if err != nil {
 		logrus.Fatalf("Error creating bot: %v", err)
