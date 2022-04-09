@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/sirupsen/logrus"
 )
 
 func New(path string) (*BanList, error) {
@@ -25,6 +27,7 @@ func New(path string) (*BanList, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("reading dictionary: %w", err)
 	}
+	logrus.Infof("Loaded %d banned patterns", len(l.patterns))
 	return &l, nil
 }
 
