@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/pomo-mondreganto/goas/internal/banlist"
 	"github.com/pomo-mondreganto/goas/internal/bot"
 	"github.com/pomo-mondreganto/goas/internal/storage"
 	"github.com/sirupsen/logrus"
@@ -22,7 +23,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := createStorage()
-	b := createBot(ctx, s)
+	l := createDictionary()
+	b := createBot(ctx, s, l)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
@@ -39,6 +41,7 @@ func setupConfig() {
 	pflag.String("log_level", "INFO", "Log level {INFO|DEBUG|WARNING|ERROR}")
 	pflag.StringP("data_dir", "d", "data", "Data directory")
 	pflag.StringP("samples_dir", "s", "resources", "Spam samples directory")
+	pflag.String("dictionary", "banlist.txt", "Path to banned patterns text file")
 
 	pflag.Parse()
 
@@ -86,13 +89,21 @@ func createStorage() *storage.Storage {
 	return s
 }
 
-func createBot(ctx context.Context, s *storage.Storage) *bot.Bot {
+func createBot(ctx context.Context, s *storage.Storage, l *banlist.BanList) *bot.Bot {
 	token := viper.GetString("token")
 	debug := viper.GetBool("debug")
 	samples := viper.GetString("samples_dir")
-	b, err := bot.New(ctx, token, debug, samples, s)
+	b, err := bot.New(ctx, token, debug, samples, s, l)
 	if err != nil {
 		logrus.Fatalf("Error creating bot: %v", err)
 	}
 	return b
+}
+
+func createDictionary() *banlist.BanList {
+	l, err := banlist.New(viper.GetString("dictionary"))
+	if err != nil {
+		logrus.Fatalf("Error creating dictionary: %v", err)
+	}
+	return l
 }

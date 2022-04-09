@@ -8,11 +8,19 @@ import (
 
 	"github.com/corona10/goimagehash"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/pomo-mondreganto/goas/internal/banlist"
 	"github.com/pomo-mondreganto/goas/internal/storage"
 	"github.com/sirupsen/logrus"
 )
 
-func New(ctx context.Context, token string, debug bool, samplesPath string, s *storage.Storage) (*Bot, error) {
+func New(
+	ctx context.Context,
+	token string,
+	debug bool,
+	samplesPath string,
+	s *storage.Storage,
+	l *banlist.BanList,
+) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, fmt.Errorf("creating bot api: %w", err)
@@ -35,6 +43,7 @@ func New(ctx context.Context, token string, debug bool, samplesPath string, s *s
 		updates:     make(chan tgbotapi.Update, 100),
 		logger:      logger,
 		storage:     s,
+		banlist:     l,
 		spamSamples: samples,
 		samplesPath: samplesPath,
 	}
@@ -53,6 +62,7 @@ type Bot struct {
 	logger      *logrus.Entry
 	wg          sync.WaitGroup
 	storage     *storage.Storage
+	banlist     *banlist.BanList
 	spamSamples map[string]*goimagehash.ImageHash
 	samplesPath string
 }

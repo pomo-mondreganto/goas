@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -30,13 +29,8 @@ const (
 
 	imageDistanceThreshold = 24
 
-	votesToBan = 5
+	votesToBan = 3
 )
-
-var bannedStrings = []string{
-	"/joinchat/",
-	"/bit.ly/",
-}
 
 func (b *Bot) isChatMessageSuspicious(ctx context.Context, upd tgbotapi.Update) (spamVerdict, error) {
 	authorID := upd.Message.From.ID
@@ -80,11 +74,9 @@ func (b *Bot) isChatMessageSuspicious(ctx context.Context, upd tgbotapi.Update) 
 	logger.Debugf("Message count: %d", msgCount)
 
 	content := upd.Message.Text
-	for _, s := range bannedStrings {
-		if strings.Contains(content, s) {
-			logger.Debugf("Contains banned string %s, suspicious", s)
-			return mightBeSpam, nil
-		}
+	if b.banlist.Contains(content) {
+		logger.Debug("Contains banned string, suspicious")
+		return mightBeSpam, nil
 	}
 
 	logger.Debugf("Photos info: %v", upd.Message.Photo)
