@@ -21,7 +21,7 @@ func New(path string) (*BanList, error) {
 	l := BanList{}
 	for scanner.Scan() {
 		if pattern := scanner.Text(); pattern != "" {
-			l.patterns = append(l.patterns, pattern)
+			l.patterns = append(l.patterns, strings.ToLower(pattern))
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -36,6 +36,7 @@ type BanList struct {
 }
 
 func (l *BanList) Contains(s string) bool {
+	s = strings.ToLower(s)
 	for _, pattern := range l.patterns {
 		if strings.Contains(s, pattern) {
 			return true
