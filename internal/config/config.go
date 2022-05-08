@@ -21,5 +21,6 @@ func Get() *Config {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		logrus.Fatalf("Error unmarshalling config: %v", err)
 	}
+	logrus.Debugf("Got config: %+v", cfg)
 	return &cfg
 }
