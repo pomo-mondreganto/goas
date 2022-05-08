@@ -19,9 +19,8 @@ import (
 )
 
 func main() {
-	cfg := setupConfig()
 	initLogger()
-	setLogLevel(cfg)
+	cfg := setupConfig()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -51,12 +50,15 @@ func setupConfig() *config.Config {
 
 	pflag.Parse()
 
+	viper.SetEnvPrefix("GOAS")
 	if err := viper.BindPFlags(pflag.CommandLine); err != nil {
 		logrus.Fatalf("Error binding flags: %v", err)
 	}
-
-	viper.SetEnvPrefix("GOAS")
+	if err := viper.BindEnv("token"); err != nil {
+		logrus.Fatalf("Error binding env: %v", err)
+	}
 	viper.AutomaticEnv()
+	setLogLevel(viper.GetString("log_level"))
 	return config.Get()
 }
 
@@ -69,8 +71,8 @@ func initLogger() {
 	logrus.SetFormatter(mainFormatter)
 }
 
-func setLogLevel(cfg *config.Config) {
-	switch strings.ToUpper(cfg.LogLevel) {
+func setLogLevel(level string) {
+	switch strings.ToUpper(level) {
 	case "DEBUG":
 		logrus.SetLevel(logrus.DebugLevel)
 	case "INFO":
@@ -81,7 +83,7 @@ func setLogLevel(cfg *config.Config) {
 		viper.Set("debug", true)
 		logrus.SetLevel(logrus.ErrorLevel)
 	default:
-		logrus.Errorf("Invalid log level provided: %s", cfg.LogLevel)
+		logrus.Errorf("Invalid log level provided: %s", level)
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
