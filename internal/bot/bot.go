@@ -9,6 +9,7 @@ import (
 	"github.com/corona10/goimagehash"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pomo-mondreganto/goas/internal/banlist"
+	"github.com/pomo-mondreganto/goas/internal/imgmatch"
 	"github.com/pomo-mondreganto/goas/internal/storage"
 	"github.com/sirupsen/logrus"
 )
@@ -17,9 +18,9 @@ func New(
 	ctx context.Context,
 	token string,
 	debug bool,
-	samplesPath string,
 	s *storage.Storage,
 	l *banlist.BanList,
+	m *imgmatch.Matcher,
 ) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
@@ -31,21 +32,14 @@ func New(
 	logger := logrus.WithField("account", api.Self.UserName)
 	logger.Infof("Authorized successfully")
 
-	samples, err := loadSamples(samplesPath)
-	if err != nil {
-		return nil, fmt.Errorf("reading spam samples: %w", err)
-	}
-	logger.Infof("Loaded %d spam samples", len(samples))
-
 	b := Bot{
-		api:         api,
-		requests:    make(chan tgbotapi.Chattable, 100),
-		updates:     make(chan tgbotapi.Update, 100),
-		logger:      logger,
-		storage:     s,
-		banlist:     l,
-		spamSamples: samples,
-		samplesPath: samplesPath,
+		api:        api,
+		requests:   make(chan tgbotapi.Chattable, 100),
+		updates:    make(chan tgbotapi.Update, 100),
+		logger:     logger,
+		storage:    s,
+		banlist:    l,
+		imgMatcher: m,
 	}
 
 	b.wg.Add(2)
@@ -63,6 +57,7 @@ type Bot struct {
 	wg          sync.WaitGroup
 	storage     *storage.Storage
 	banlist     *banlist.BanList
+	imgMatcher  *imgmatch.Matcher
 	spamSamples map[string]*goimagehash.ImageHash
 	samplesPath string
 }
@@ -100,33 +95,39 @@ loop:
 		select {
 		case upd := <-b.updates:
 			if upd.CallbackQuery != nil {
-				if err := b.processCallback(ctx, upd); err != nil {
+				if err := b.processCallback(ctx, upd.CallbackQuery); err != nil {
 					b.logger.Errorf("Error processing callback: %v", err)
 				}
 				break
 			}
 
-			if upd.Message == nil || upd.Message.Chat == nil || upd.Message.Chat.IsPrivate() {
+			if upd.Message.Chat == nil || upd.Message.Chat.IsPrivate() {
 				break
 			}
 
 			b.logger.Infof("Received an update: %v", upd)
 
-			if upd.Message.NewChatMembers != nil {
-				if err := b.processNewMembersUpdate(upd); err != nil {
-					b.logger.Errorf("Error processing new members: %v", err)
+			if upd.Message != nil && upd.Message.Chat != nil && !upd.Message.Chat.IsPrivate() {
+				if upd.Message.NewChatMembers != nil {
+					if err := b.processNewMembersMessage(upd.Message); err != nil {
+						b.logger.Errorf("Error processing new members: %v", err)
+					}
+					break
 				}
-				break
+				if upd.Message.LeftChatMember != nil {
+					b.processMemberLeftMessage(upd.Message)
+					break
+				}
+				if err := b.processChatMessage(ctx, upd.Message); err != nil {
+					b.logger.Errorf("Error processing chat message: %v", err)
+					break
+				}
 			}
-
-			if upd.Message.LeftChatMember != nil {
-				b.processMemberLeftUpdate(upd)
-				break
-			}
-
-			if err := b.processChatMessageUpdate(ctx, upd); err != nil {
-				b.logger.Errorf("Error processing chat message: %v", err)
-				break
+			if upd.EditedMessage != nil && upd.EditedMessage.Chat != nil && !upd.EditedMessage.Chat.IsPrivate() {
+				if err := b.processChatMessage(ctx, upd.EditedMessage); err != nil {
+					b.logger.Errorf("Error processing edited chat message: %v", err)
+					break
+				}
 			}
 
 		case m := <-b.requests:

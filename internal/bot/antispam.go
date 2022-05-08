@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/corona10/goimagehash"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 	"go.uber.org/atomic"
@@ -27,14 +26,12 @@ const (
 	suspiciousForwardMsgThreshold = 3
 	suspiciousPhotoMsgThreshold   = 5
 
-	imageDistanceThreshold = 24
-
 	votesToBan = 3
 )
 
-func (b *Bot) isChatMessageSuspicious(ctx context.Context, upd tgbotapi.Update) (spamVerdict, error) {
-	authorID := upd.Message.From.ID
-	chatID := upd.Message.Chat.ID
+func (b *Bot) isChatMessageSuspicious(ctx context.Context, msg *tgbotapi.Message) (spamVerdict, error) {
+	authorID := msg.From.ID
+	chatID := msg.Chat.ID
 
 	logger := b.logger.WithField("authorID", authorID).WithField("chatID", chatID)
 	logger.Debugf("Checking message for spam")
@@ -73,25 +70,26 @@ func (b *Bot) isChatMessageSuspicious(ctx context.Context, upd tgbotapi.Update) 
 
 	logger.Debugf("Message count: %d", msgCount)
 
-	if b.banlist.Contains(upd.Message.Text) {
+	// Check message text.
+	if b.checkMessage(msg) {
 		logger.Debug("Contains banned string, suspicious")
 		return mightBeSpam, nil
 	}
 
-	logger.Debugf("Photos info: %v", upd.Message.Photo)
-	if msgCount < suspiciousPhotoMsgThreshold && b.checkPhoto(ctx, logger, upd) {
+	logger.Debugf("Photos info: %v", msg.Photo)
+	if msgCount < suspiciousPhotoMsgThreshold && b.checkPhoto(ctx, logger, msg) {
 		logger.Debugf("Photo matches spam sample")
 		return definitelySpam, nil
 	}
 
 	logger.Debugf(
 		"Forward info: from msg %d, user %v, chat %v at %v",
-		upd.Message.ForwardFromMessageID,
-		upd.Message.ForwardFrom,
-		upd.Message.ForwardFromChat,
-		upd.Message.ForwardDate,
+		msg.ForwardFromMessageID,
+		msg.ForwardFrom,
+		msg.ForwardFromChat,
+		msg.ForwardDate,
 	)
-	if msgCount < suspiciousForwardMsgThreshold && b.checkForward(logger, upd) {
+	if msgCount < suspiciousForwardMsgThreshold && b.checkForward(logger, msg) {
 		logger.Debugf("Forward with only %d messages, suspicious", msgCount)
 		return mightBeSpam, nil
 	}
@@ -100,31 +98,32 @@ func (b *Bot) isChatMessageSuspicious(ctx context.Context, upd tgbotapi.Update) 
 	return notSpam, nil
 }
 
-func (b *Bot) checkForward(logger *logrus.Entry, upd tgbotapi.Update) bool {
-	if upd.Message.ForwardDate == 0 {
+func (b *Bot) checkForward(logger *logrus.Entry, msg *tgbotapi.Message) bool {
+	if msg.ForwardDate == 0 {
 		logger.Debug("Not a forward")
 		return false
 	}
-	chatID := upd.Message.Chat.ID
-	if upd.Message.ForwardFromChat != nil && upd.Message.ForwardFromChat.ID == chatID {
+	chatID := msg.Chat.ID
+	if msg.ForwardFromChat != nil && msg.ForwardFromChat.ID == chatID {
 		logger.Debug("Same chat forward")
 		return false
 	}
 	return true
 }
 
-func (b *Bot) checkPhoto(ctx context.Context, logger *logrus.Entry, upd tgbotapi.Update) bool {
-	if upd.Message.Photo == nil {
-		logrus.Debug("No photos")
+func (b *Bot) checkPhoto(ctx context.Context, logger *logrus.Entry, msg *tgbotapi.Message) bool {
+	if msg.Photo == nil {
+		logger.Debug("No photos")
 		return false
 	}
 
-	result := atomic.Bool{}
+	result := atomic.NewBool(false)
 	wg := sync.WaitGroup{}
-	wg.Add(len(upd.Message.Photo))
-	for _, ps := range upd.Message.Photo {
+	wg.Add(len(msg.Photo))
+	for _, ps := range msg.Photo {
 		go func(fileID string) {
-			match, err := b.checkPhotoHashMatches(ctx, fileID, &wg, logger)
+			defer wg.Done()
+			match, err := b.checkPhotoHashMatches(ctx, fileID)
 			if err != nil {
 				logger.Errorf("Error checking photo hash: %v", err)
 			}
@@ -138,32 +137,21 @@ func (b *Bot) checkPhoto(ctx context.Context, logger *logrus.Entry, upd tgbotapi
 	return result.Load()
 }
 
-func (b *Bot) checkPhotoHashMatches(ctx context.Context, fileID string, wg *sync.WaitGroup, logger *logrus.Entry) (bool, error) {
-	defer wg.Done()
+func (b *Bot) checkMessage(msg *tgbotapi.Message) bool {
+	b.logger.Debugf("Checking message %v", msg.Text)
+	return b.banlist.Contains(msg.Text)
+}
 
+func (b *Bot) checkPhotoHashMatches(ctx context.Context, fileID string) (bool, error) {
 	img, err := b.downloadImg(ctx, fileID, nil)
 	if err != nil {
-		return false, fmt.Errorf("downloading img: %w", err)
+		return false, fmt.Errorf("downloading image: %w", err)
 	}
-
-	hash, err := goimagehash.PerceptionHash(img)
+	suspicious, err := b.imgMatcher.CheckSample(img)
 	if err != nil {
-		return false, fmt.Errorf("calculating hash: %w", err)
+		return false, fmt.Errorf("checking image: %w", err)
 	}
-
-	for name, other := range b.spamSamples {
-		dist, err := hash.Distance(other)
-		if err != nil {
-			logger.Errorf("Error calculating distance: %v", err)
-			continue
-		}
-		logrus.Debugf("Distance to sample %s is %d", name, dist)
-		if dist <= imageDistanceThreshold {
-			logger.Infof("Image matches with sample %s with distance %d", name, dist)
-			return true, nil
-		}
-	}
-	return false, nil
+	return suspicious, nil
 }
 
 func (b *Bot) banSender(msg *tgbotapi.Message) {

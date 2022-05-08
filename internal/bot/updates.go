@@ -9,27 +9,26 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func (b *Bot) processNewMembersUpdate(upd tgbotapi.Update) error {
+func (b *Bot) processNewMembersMessage(msg *tgbotapi.Message) error {
 	b.logger.Info("Processing new members message")
-	for _, member := range upd.Message.NewChatMembers {
+	for _, member := range msg.NewChatMembers {
 		if _, err := b.storage.GetOrSetUserFirstSeen(member.ID, time.Now()); err != nil {
 			return fmt.Errorf("setting user %d first seen: %w", member.ID, err)
 		}
 	}
 	b.logger.Info("Deleting new members message")
-	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
+	b.requestDelete(msg.Chat.ID, msg.MessageID)
 	return nil
 }
 
-func (b *Bot) processMemberLeftUpdate(upd tgbotapi.Update) {
+func (b *Bot) processMemberLeftMessage(msg *tgbotapi.Message) {
 	b.logger.Info("Deleting member left message")
-	b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
+	b.requestDelete(msg.Chat.ID, msg.MessageID)
 }
 
-func (b *Bot) processChatMessageUpdate(ctx context.Context, upd tgbotapi.Update) error {
+func (b *Bot) processChatMessage(ctx context.Context, msg *tgbotapi.Message) error {
 	b.logger.Info("Processing chat message")
 
-	msg := upd.Message
 	if _, err := b.storage.GetOrSetUserFirstSeen(msg.From.ID, time.Now()); err != nil {
 		return fmt.Errorf("getting user first seen: %w", err)
 	}
@@ -55,19 +54,19 @@ func (b *Bot) processChatMessageUpdate(ctx context.Context, upd tgbotapi.Update)
 			}
 		}
 		b.logger.Info("Deleting command message in public chat")
-		b.requestDelete(upd.Message.Chat.ID, upd.Message.MessageID)
+		b.requestDelete(msg.Chat.ID, msg.MessageID)
 		return nil
 	}
 
-	verdict, err := b.isChatMessageSuspicious(ctx, upd)
+	verdict, err := b.isChatMessageSuspicious(ctx, msg)
 	if err != nil {
 		return fmt.Errorf("checking suspicious message: %w", err)
 	}
 
 	if verdict == mightBeSpam {
-		b.processSuspiciousMessage(upd)
+		b.processSuspiciousMessage(msg)
 	} else if verdict == definitelySpam {
-		b.processSpamMessage(upd)
+		b.processSpamMessage(msg)
 	}
 
 	return nil
@@ -108,7 +107,7 @@ func (b *Bot) processSpamCommand(ctx context.Context, msg *tgbotapi.Message) err
 
 	b.logger.Infof("Received spam message from %d", userID)
 	for _, ps := range reply.Photo {
-		if err := b.addSample(ctx, ps.FileID); err != nil {
+		if err := b.addImageSample(ctx, ps.FileID); err != nil {
 			return fmt.Errorf("adding image sample: %w", err)
 		}
 	}
@@ -116,42 +115,41 @@ func (b *Bot) processSpamCommand(ctx context.Context, msg *tgbotapi.Message) err
 	return nil
 }
 
-func (b *Bot) processSuspiciousMessage(upd tgbotapi.Update) {
-	m := getSpamVoteMessage(upd.Message, "Is this message spam?")
+func (b *Bot) processSuspiciousMessage(msg *tgbotapi.Message) {
+	m := getSpamVoteMessage(msg, "Is this message spam?")
 	b.logger.Info("Sending suspicious message notification")
 	b.requestSend(m)
 }
 
-func (b *Bot) processSpamMessage(upd tgbotapi.Update) {
-	m := getSpamVoteMessage(upd.Message, "This message looks like spam. Is it?")
+func (b *Bot) processSpamMessage(msg *tgbotapi.Message) {
+	m := getSpamVoteMessage(msg, "This message looks like spam. Is it?")
 	m.ParseMode = "markdown"
-	m.ReplyToMessageID = upd.Message.MessageID
+	m.ReplyToMessageID = msg.MessageID
 	b.logger.Info("Sending spam message notification")
 	b.requestSend(m)
 }
 
-func (b *Bot) processCallback(ctx context.Context, upd tgbotapi.Update) error {
-	cb := *upd.CallbackQuery
-	b.logger.Debugf("Received callback: %+v", cb)
-	if cb.Message == nil {
+func (b *Bot) processCallback(ctx context.Context, callback *tgbotapi.CallbackQuery) error {
+	b.logger.Debugf("Received callback: %+v", callback)
+	if callback.Message == nil {
 		b.logger.Warning("Callback without message, skipping")
 		return nil
 	}
-	if cb.Message.Chat == nil {
+	if callback.Message.Chat == nil {
 		b.logger.Warning("Callback not in chat, skipping")
 		return nil
 	}
-	if cb.Message.ReplyToMessage == nil {
+	if callback.Message.ReplyToMessage == nil {
 		b.logger.Warning("Callback message is not a reply, skipping")
 		return nil
 	}
-	userID := cb.From.ID
-	chatID := cb.Message.Chat.ID
-	msgID := cb.Message.MessageID
-	reply := cb.Message.ReplyToMessage
+	userID := callback.From.ID
+	chatID := callback.Message.Chat.ID
+	msgID := callback.Message.MessageID
+	reply := callback.Message.ReplyToMessage
 	b.logger.Debugf("User id: %d, Message ID: %d, reply: %#v", userID, msgID, reply)
 
-	vote := cb.Data == voteSpamCallback
+	vote := callback.Data == voteSpamCallback
 
 	if err := b.storage.VoteSpam(userID, chatID, msgID, vote); err != nil {
 		return fmt.Errorf("voting: %w", err)
@@ -175,7 +173,7 @@ func (b *Bot) processCallback(ctx context.Context, upd tgbotapi.Update) error {
 			if len(reply.Photo) > 0 {
 				b.logger.Info("Adding photos as samples")
 				for _, ps := range reply.Photo {
-					if err := b.addSample(ctx, ps.FileID); err != nil {
+					if err := b.addImageSample(ctx, ps.FileID); err != nil {
 						return fmt.Errorf("adding image sample: %w", err)
 					}
 				}
