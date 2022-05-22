@@ -101,10 +101,6 @@ loop:
 				break
 			}
 
-			if upd.Message.Chat == nil || upd.Message.Chat.IsPrivate() {
-				break
-			}
-
 			b.logger.Infof("Received an update: %v", upd)
 
 			if upd.Message != nil && upd.Message.Chat != nil && !upd.Message.Chat.IsPrivate() {
